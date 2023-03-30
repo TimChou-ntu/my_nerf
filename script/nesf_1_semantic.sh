@@ -1,4 +1,5 @@
-CUDA_LAUNCH_BLOCKING=1 python -m pdb ../train_semantic.py --dataset_name klevr \
+python ../train_semantic.py \
+    --mode train --dataset_name klevr \
     --root_dir /home/timothy/Desktop/2023Spring/GeoNeRF/data/data/nesf_data/klevr/1 \
     --N_importance 64 --img_wh 256 256 --noise_std 0 \
     --num_epochs 16 --batch_size 1024 \

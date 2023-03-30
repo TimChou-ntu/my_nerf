@@ -198,7 +198,7 @@ if __name__ == '__main__':
         save_top_k=5
     )
 
-    tb_logger = pl_loggers.TensorBoardLogger(save_dir="./",version=hparams.exp_name)
+    tb_logger = pl_loggers.TensorBoardLogger(save_dir="../",version=hparams.exp_name)
 
     trainer = Trainer(
         max_epochs=hparams.num_epochs,

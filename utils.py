@@ -71,11 +71,13 @@ def trilinear_interpolation(features, points):
 
     # Rescale points from (-1, 1) to (0, N-1)
     points = (points + 1) / 2 * (N - 1)
-
+    # Create mask for points outside the grid, their values will be zero
+    mask = torch.all((points > 0.)*(points < (N-1.)),dim=-1,keepdim=True) # (B, 1)
+    # Points outside the grid are clamped to the grid boundaries (0,N-1)
     # Get voxel coordinates
-    i_floor = torch.floor(points[:, 0]).long() # (B)
-    j_floor = torch.floor(points[:, 1]).long()
-    k_floor = torch.floor(points[:, 2]).long()
+    i_floor = torch.clamp(torch.floor(points[:, 0]), min=0., max=(N-1.)).long() # (B)
+    j_floor = torch.clamp(torch.floor(points[:, 1]), min=0., max=(N-1.)).long()
+    k_floor = torch.clamp(torch.floor(points[:, 2]), min=0., max=(N-1.)).long()
 
     i_ceil = torch.min(i_floor + 1, torch.tensor(N - 1, device=features.device))
     j_ceil = torch.min(j_floor + 1, torch.tensor(N - 1, device=features.device))
@@ -116,5 +118,5 @@ def trilinear_interpolation(features, points):
         w_110[:, None] * f_110 +
         w_111[:, None] * f_111
     )
-
-    return interpolated_features
+    masked_interpolated_features = interpolated_features * mask
+    return masked_interpolated_features

@@ -152,7 +152,7 @@ if __name__ == '__main__':
         monitor='val/loss',
         save_top_k=5,
     )
-    tb_logger = pl_loggers.TensorBoardLogger(save_dir='./semantic_logs', name=hparams.exp_name)
+    tb_logger = pl_loggers.TensorBoardLogger(save_dir='../semantic_logs', name=hparams.exp_name)
     trainer = Trainer(
         max_epochs=hparams.num_epochs,
         callbacks=checkpoint_callback,
