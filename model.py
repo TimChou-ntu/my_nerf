@@ -76,3 +76,50 @@ class NeRF(nn.Module):
 
         out = torch.cat([rgb, sigma], -1)
         return out
+    
+class Semantic_MLP(nn.Module):
+    def __init__(self, input_dim, output_dim):
+        super().__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(input_dim, 128),
+            nn.ReLU(),
+            nn.Linear(128, output_dim),
+        )
+    def forward(self, x):
+        out = self.mlp(x)
+        return out
+
+# Use others in 3D_UNet.py
+# class UNet3D(nn.Module):
+#     '''
+#     feature_size: UNet feature size per layer, ex: (32, 64, 128, 256)
+#     input dim: should be density grid so this should be 1
+#     output_dims: 3D input grid's output dimention
+
+#     Encoder: conv(input_dim , feature[0])-> conv(feature[0], feature[1])-> maxpool-> 
+#              conv(feature[1], feature[1])-> conv(feature[1], feature[2])-> maxpool...
+#     '''
+#     def __init__(self, feature_size, input_dim, output_dims):
+#         super().__init__()
+#         assert len(feature_size) > 0 # "feature size should be larger than 1"
+#         self.depth = len(feature_size)
+
+#         self.Encoder = [
+#             nn.Conv3d(input_dim, feature_size[0], kernel_size=3, stride=1),
+#             nn.ReLU(),
+#         ]
+#         self.Decoder = []
+        
+#         for i in range(len(feature_size)-1):
+#             self.Encoder.append(nn.Conv3d(feature_size[i], feature_size[i+1], kernel_size=3, stride=1))
+#             self.Encoder.append(nn.ReLU)
+#             if i < len(feature_size)-2:
+#                 self.Encoder.append(nn.MaxPool3d(kernel_size=2, stride=2))
+#                 self.Encoder.append(nn.ReLU)
+#                 self.Encoder.append(nn.Conv3d(feature_size[i+1], feature_size[i+1], kernel_size=3, stride=1))
+#                 self.Encoder.append(nn.ReLU)
+
+#         for i in range(len(feature_size)-2):
+#             self.Decoder.append(nn.ConvTranspose3d(feature_size[-1-i], feature_size[-2-i], kernel_size=2, stride=1))
+#             self.Decoder.append(nn.ReLU)
+#             # self.Decoder.append(nn.Conv3d(feature_size[-2-i],feature_size[-2-i], kernel_size=3, stride=1))

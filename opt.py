@@ -26,7 +26,7 @@ def get_opts():
                         help='std dev of noise added to regularize sigma')
         
     parser.add_argument('--loss_type', type=str, default='mse',
-                        choices=['mse'],
+                        choices=['mse','crossentropy'],
                         help='loss to use')
 
     parser.add_argument('--batch_size', type=int, default=1024,
@@ -74,5 +74,19 @@ def get_opts():
 
     parser.add_argument('--exp_name', type=str, default='exp',
                         help='experiment name')
+    parser.add_argument('--mode', type=str, required=True, choices=['train', 'test'],
+                        help='train or test')
+    ###########################
+    #### params for semantic ##
+    parser.add_argument('--semantic_class', type=int, default=None,
+                        help='how many semantic classes to use')
+    parser.add_argument('--resolution', type=int, default=None,
+                        help='resolution of semantic map')
+    parser.add_argument('--nerf_ckpt', type=str, default=None,
+                        help='pretrained nerf checkpoint path to load')
+    ###########################
 
     return parser.parse_args()
+
+# Klevr
+# semantic_class:[0,1,2,3,4,5]

@@ -12,5 +12,16 @@ class MSELoss(nn.Module):
             loss += self.loss(inputs['rgb_fine'], targets)
 
         return loss
+    
+class CrossEntrypyLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.loss = nn.CrossEntropyLoss()
 
-loss_dict = {'mse': MSELoss}
+    def forward(self, inputs, targets):
+        loss = self.loss(inputs["semantic_final"], targets)
+        
+        return loss
+
+# NeSF use also regularization term on neighboring area to have similar semantic class
+loss_dict = {'mse': MSELoss, 'crossentropy': CrossEntrypyLoss}

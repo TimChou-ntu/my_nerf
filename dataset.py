@@ -6,7 +6,9 @@ import os
 import glob
 from PIL import Image
 from torchvision import transforms as T
+import random
 from ray_utils import *
+from nesf_utils import *
 
 # LLFF dataset
 def normalize(v):
@@ -227,7 +229,7 @@ class LLFFDataset(Dataset):
                 assert img.size[1]*self.img_wh[0] == img.size[0]*self.img_wh[1], \
                     f'''{image_path} has different aspect ratio than img_wh, 
                         please check your data!'''
-                img = img.resize(self.img_wh, Image.LANCZOS)
+                img = img.resize(self.img_wh, Image.Resampling.LANCZOS)
                 img = self.transform(img) # (3, h, w)
                 img = img.view(3, -1).permute(1, 0) # (h*w, 3) RGB
                 self.all_rgbs += [img]
@@ -310,7 +312,7 @@ class LLFFDataset(Dataset):
 
             if self.split == 'val':
                 img = Image.open(self.image_path_val).convert('RGB')
-                img = img.resize(self.img_wh, Image.LANCZOS)
+                img = img.resize(self.img_wh, Image.Resampling.LANCZOS)
                 img = self.transform(img) # (3, h, w)
                 img = img.view(3, -1).permute(1, 0) # (h*w, 3)
                 sample['rgbs'] = img
@@ -359,7 +361,7 @@ class BlenderDataset(Dataset):
                 image_path = os.path.join(self.root_dir, f"{frame['file_path']}.png")
                 self.image_paths += [image_path]
                 img = Image.open(image_path)
-                img = img.resize(self.img_wh, Image.LANCZOS)
+                img = img.resize(self.img_wh, Image.Resampling.LANCZOS)
                 img = self.transform(img) # (4, h, w)
                 img = img.view(4, -1).permute(1,0) # (h*w, 4)
                 img = img[:, :3]*img[:, -1:]+(1-img[:,-1:]) # blend A to RGB
@@ -388,7 +390,7 @@ class BlenderDataset(Dataset):
             c2w = torch.FloatTensor(frame['transform_matrix'])[:3,:4]
 
             img = Image.open(os.path.join(self.root_dir, f"{frame['file_path']}.png"))
-            img = img.resize(self.img_wh, Image.LANCZOS)
+            img = img.resize(self.img_wh, Image.Resampling.LANCZOS)
             img = self.transform(img)
             valid_mask = (img[-1]>0).flatten()
             img = img.view(4,-1).permute(1,0)
@@ -408,6 +410,146 @@ class BlenderDataset(Dataset):
 
         return sample
 
+# Nesf Klevr
+
+class KlevrDataset(Dataset):
+    def __init__(self, root_dir, img_wh, split='train', get_rgb=True, get_semantic=False) -> None:
+        # super().__init__()
+        self.root_dir = root_dir
+        self.get_rgb = get_rgb
+        self.get_semantic = get_semantic
+        if split == 'train':
+            self.split = split
+        elif split =='val':
+            self.split = 'test'
+        else:
+            raise KeyError("only train/val split works")
+        self.define_transforms()
+        self.read_meta()
+        self.white_back = True
+
+
+    def define_transforms(self):
+        self.transform = T.ToTensor()
+
+    def read_meta(self):
+        with open(os.path.join(self.root_dir, "metadata.json"), "r") as f:
+            self.meta = json.load(f)
+
+        w, h = self.meta['metadata']['width'], self.meta['metadata']['width']
+        self.img_wh = (w, h)
+        self.focal = (self.meta['camera']['focal_length']*w/self.meta['camera']['sensor_width'])
+        self.split_ids = self.meta['split_ids'][self.split]
+
+        self.scene_boundaries = np.array([self.meta['scene_boundaries']['min'], self.meta['scene_boundaries']['max']])
+        self.segmentation_labels = self.meta['segmentation_labels']
+        self.directions = get_ray_directions(h, w, self.focal)
+
+        if self.split == 'train':
+            self.poses = []
+            self.all_rays_o = []
+            self.all_rays_d = []
+            self.all_rays = []
+            self.all_rgbs = []
+            self.all_semantics = []
+            camera_positions = np.array(self.meta['camera']['positions'])
+            camera_quaternions = np.array(self.meta['camera']['quaternions'])
+            for image_id in self.split_ids:
+                if self.get_rgb:
+                    image_path = os.path.join(self.root_dir, f'rgba_{image_id:05d}.png')
+                    img = Image.open(image_path)
+                    img = img.resize(self.img_wh, Image.Resampling.LANCZOS)
+                    img = self.transform(img) # (4, h, w)
+                    img = img.view(4, -1).permute(1,0) # (h*w, 4)
+                    # not sure, original jax implementation seems not using blend just cut it off, they also /255 to make it [0,1] which I didn't use
+                    # img = img[:, :3]*img[:, -1:]+(1-img[:,-1:]) # blend A to RGB
+                    img = img[:, :3]
+                    self.all_rgbs += [img]
+                if self.get_semantic:
+                    semantic_path = os.path.join(self.root_dir, f'segmentation_{image_id:05d}.png')
+                    sem = Image.open(semantic_path)
+                    sem = sem.resize(self.img_wh, Image.Resampling.LANCZOS)
+                    sem = torch.from_numpy(np.array(sem)).long().unsqueeze(0) #(1, h,w) # not sure (h,w,1) or (1, h, w)
+                    self.all_semantics += [sem]
+                pose = np.array(from_position_and_quaternion(camera_positions[image_id:image_id+1,:], camera_quaternions[image_id:image_id+1,:], False))[0,:3,:4]
+                self.poses += [pose]
+                c2w = torch.FloatTensor(pose)                    
+                rays_o, rays_d = get_rays(self.directions, c2w)
+                self.all_rays_o += [rays_o]
+                self.all_rays_d += [rays_d]
+
+            self.all_rays_o = torch.cat(self.all_rays_o, 0) # (len(self.split_ids)*h*w, 3)
+            self.all_rays_d = torch.cat(self.all_rays_d, 0) # (len(self.split_ids)*h*w, 3)
+            self.all_rays_o, self.all_rays_d = scale_rays(self.all_rays_o, self.all_rays_d, self.scene_boundaries, self.img_wh)
+            
+            
+            self.near, self.far = calculate_near_and_far(self.all_rays_o, self.all_rays_d)
+            self.all_rays = torch.cat([self.all_rays_o, self.all_rays_d, self.near, self.far],1).float()
+
+            if len(self.all_rgbs) > 0:
+                self.all_rgbs = torch.cat(self.all_rgbs, 0)
+            if len(self.all_semantics) > 0:
+                self.all_semantics = torch.cat(self.all_semantics, 0)
+
+    def __len__(self):
+        if self.split == 'train':
+            return len(self.all_rays)
+        elif self.split == 'val' or self.split == 'test':
+            return 8 # only validate 8 images
+        return len(self.split_ids)
+    def __getitem__(self, idx):
+        if self.split == 'train':
+            sample = {
+                'rays': self.all_rays[idx],
+            }
+            if self.get_rgb:
+                sample['rgbs'] = self.all_rgbs[idx]
+            if self.get_semantic:
+                sample["semantics"] = self.all_semantics[idx]
+
+        # split of val/test
+        else:
+            image_id = self.split_ids[idx]
+
+            if self.get_rgb:
+                img = Image.open(os.path.join(self.root_dir, f'rgba_{image_id:05d}.png'))
+                img = img.resize(self.img_wh, Image.Resampling.LANCZOS)
+                img = self.transform(img)
+                valid_mask = (img[-1]>0).flatten()
+                img = img.view(4,-1).permute(1,0)
+                # img = img[:,:3]*img[:,-1:]+(1-img[:,-1:])
+                img = img[:, :3]
+
+            if self.get_semantic:
+                sem = Image.open(os.path.join(self.root_dir, f'segmentation_{image_id:05d}.png'))
+                sem = sem.resize(self.img_wh, Image.Resampling.LANCZOS)
+                sem = torch.from_numpy(np.array(sem)).long().unsqueeze(-1) #(h,w,1) # not sure (h,w,1) or (1, h, w)
+
+            camera_position = np.array(self.meta['camera']['positions'][image_id:image_id+1])
+            camera_quaternion = np.array(self.meta['camera']['quaternions'][image_id:image_id+1])
+
+            pose = np.array(from_position_and_quaternion(camera_position, camera_quaternion, False))[0,:3,:4]
+            # pose = np.array(from_position_and_quaternion(camera_position[idx:1+idx,:], camera_quaternion[idx:1+idx,:], False))[0,:3,:4]
+            c2w = torch.FloatTensor(pose)[:3,:4]
+            rays_o, rays_d = get_rays(self.directions, c2w)
+            rays_o, rays_d = scale_rays(rays_o, rays_d, self.scene_boundaries, self.img_wh)
+            
+            self.near, self.far = calculate_near_and_far(rays_o, rays_d)
+            rays = torch.cat([rays_o, rays_d, 
+                              self.near,
+                              self.far],
+                              1) # (H*W, 8)
+
+            sample = {'rays': rays.float(),
+                      'c2w': c2w}
+            if self.get_rgb:
+                sample['rgbs'] = img
+                sample['valid_mask'] = valid_mask
+            if self.get_semantic:
+                sample["semantics"] = sem
+
+        return sample
+'''
 # Nesf Klevr
 class KlevrDataset(Dataset):
     def __init__(self, root_dir, split='train', img_wh=(256,256)) -> None:
@@ -450,7 +592,7 @@ class KlevrDataset(Dataset):
                 image_path = os.path.join(self.root_dir, f"{frame['file_path']}")
                 self.image_paths += [image_path]
                 img = Image.open(image_path)
-                img = img.resize(self.img_wh, Image.LANCZOS)
+                img = img.resize(self.img_wh, Image.Resampling.LANCZOS)
                 img = self.transform(img) # (4, h, w)
                 img = img.view(4, -1).permute(1,0) # (h*w, 4)
                 img = img[:, :3]*img[:, -1:]+(1-img[:,-1:]) # blend A to RGB
@@ -479,7 +621,7 @@ class KlevrDataset(Dataset):
             c2w = torch.FloatTensor(frame['transform_matrix'])[:3,:4]
 
             img = Image.open(os.path.join(self.root_dir, f"{frame['file_path']}"))
-            img = img.resize(self.img_wh, Image.LANCZOS)
+            img = img.resize(self.img_wh, Image.Resampling.LANCZOS)
             img = self.transform(img)
             valid_mask = (img[-1]>0).flatten()
             img = img.view(4,-1).permute(1,0)
@@ -499,6 +641,5 @@ class KlevrDataset(Dataset):
 
         return sample
 
-
-
+'''
 dataset_dict = {'blender': BlenderDataset, 'llff': LLFFDataset, 'klevr': KlevrDataset}

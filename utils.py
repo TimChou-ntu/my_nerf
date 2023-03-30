@@ -1,6 +1,8 @@
 import torch
 from torch.optim import SGD, Adam
 from torch.optim.lr_scheduler import CosineAnnealingLR, MultiStepLR
+import torch.nn as nn
+import torch.nn.functional as F
 
 def get_optimizer(hparams, models):
     eps = 1e-8
@@ -55,3 +57,64 @@ def load_ckpt(model, ckpt_path, model_name='model', prefixes_to_ignore=[]):
     checkpoint_ = extract_model_state_dict(ckpt_path, model_name, prefixes_to_ignore)
     model_dict.update(checkpoint_)
     model.load_state_dict(model_dict)
+
+
+def trilinear_interpolation(features, points):
+    '''
+    Args: features: (dim, N, N, N)
+            points: (B, 3)
+    return: interpolated_features: (B, dim)
+    '''
+    # Get grid resolution and batch size
+    N = features.shape[1]
+    B = points.shape[0]
+
+    # Rescale points from (-1, 1) to (0, N-1)
+    points = (points + 1) / 2 * (N - 1)
+
+    # Get voxel coordinates
+    i_floor = torch.floor(points[:, 0]).long() # (B)
+    j_floor = torch.floor(points[:, 1]).long()
+    k_floor = torch.floor(points[:, 2]).long()
+
+    i_ceil = torch.min(i_floor + 1, torch.tensor(N - 1, device=features.device))
+    j_ceil = torch.min(j_floor + 1, torch.tensor(N - 1, device=features.device))
+    k_ceil = torch.min(k_floor + 1, torch.tensor(N - 1, device=features.device))
+
+    # Compute weights
+    d_i = points[:, 0] - i_floor.float() # (B)
+    d_j = points[:, 1] - j_floor.float()
+    d_k = points[:, 2] - k_floor.float()
+
+    w_000 = (1 - d_i) * (1 - d_j) * (1 - d_k) # (B)
+    w_001 = (1 - d_i) * (1 - d_j) * d_k
+    w_010 = (1 - d_i) * d_j * (1 - d_k)
+    w_011 = (1 - d_i) * d_j * d_k
+    w_100 = d_i * (1 - d_j) * (1 - d_k)
+    w_101 = d_i * (1 - d_j) * d_k
+    w_110 = d_i * d_j * (1 - d_k)
+    w_111 = d_i * d_j * d_k
+
+    # Gather features
+    f_000 = torch.t(features[:, i_floor, j_floor, k_floor]).view(B, -1) 
+    f_001 = torch.t(features[:, i_floor, j_floor, k_ceil]).view(B, -1)
+    f_010 = torch.t(features[:, i_floor, j_ceil, k_floor]).view(B, -1)
+    f_011 = torch.t(features[:, i_floor, j_ceil, k_ceil]).view(B, -1)
+    f_100 = torch.t(features[:, i_ceil, j_floor, k_floor]).view(B, -1)
+    f_101 = torch.t(features[:, i_ceil, j_floor, k_ceil]).view(B, -1)
+    f_110 = torch.t(features[:, i_ceil, j_ceil, k_floor]).view(B, -1)
+    f_111 = torch.t(features[:, i_ceil, j_ceil, k_ceil]).view(B, -1)
+
+    # Compute interpolated features
+    interpolated_features = (
+        w_000[:, None] * f_000 +
+        w_001[:, None] * f_001 +
+        w_010[:, None] * f_010 +
+        w_011[:, None] * f_011 +
+        w_100[:, None] * f_100 +
+        w_101[:, None] * f_101 +
+        w_110[:, None] * f_110 +
+        w_111[:, None] * f_111
+    )
+
+    return interpolated_features

@@ -1,5 +1,6 @@
 import torch
 from torch import searchsorted
+from utils import trilinear_interpolation
 
 def sample_pdf(bins, weights, N_importance, det=False, eps=1e-5):
     """
@@ -164,4 +165,87 @@ def render_rays(models,
         result['depth_fine'] = depth_fine
         result['opacity_fine'] = weights_fine.sum(1)
 
+    return result
+
+def render_semantic_rays(
+        nerf_model,
+        small_mlp,
+        feature_grid,
+        embeddings,
+        rays,
+        N_samples=64,
+        use_disp=False,
+        perturb=0,
+        noise_std=1,
+        N_importance=0,
+        chunk=1024*32,
+        white_back=False,
+        ):
+    N_rays = rays.shape[0]
+    def inference(nerf_model, embedding_xyz, xyz_, dir_, z_vals, feature_grid):
+        N_samples_ = xyz_.shape[1]
+        xyz_ = xyz_.view(-1, 3)
+        # dir_embedded = torch.repeat_interleave(dir_embedded, repeats=N_samples_, dim=0)
+        B = xyz_.shape[0]
+        out_chunks = []
+
+        for i in range(0, B, chunk):
+            xyz_embedded = embedding_xyz(xyz_[i:i+chunk])
+            out_chunks += [nerf_model(xyz_embedded, sigma_only=True)]
+        out = torch.cat(out_chunks, 0)
+        sigmas = out.view(-1, N_samples_)
+       
+        deltas = z_vals[:, 1:] - z_vals[:,:-1] # (N_rays, N_samples-1)
+        delta_inf = 1e10*torch.ones_like(deltas[:,:1])
+        deltas = torch.cat([deltas, delta_inf], -1)  # (N_rays, N_samples)
+        deltas = deltas*torch.norm(dir_.unsqueeze(1), dim=-1)
+        noise = torch.randn(sigmas.shape, device=sigmas.device) * noise_std
+
+        alphas = 1 - torch.exp(-deltas*torch.relu(sigmas+noise))
+        alphas_shifted = torch.cat([torch.ones_like(alphas[:,:1]), 1-alphas+1e-10], -1) #(N_rays, N_samples_+1)
+        weights = alphas * torch.cumprod(alphas_shifted, -1)[:,:-1] #cumulative product, ex (1,2,3,4) -> (1,2,6,24)
+        weights_sum = weights.sum(1) # (N_rays), the accumulated opacity along the rays, equals to 1-(1-a1)(1-a2)...(1-an)
+        
+        # here should only have one grid, so squeeze the first dimension (1, dim, resolution, resolution, resolution)
+        feature_grid = feature_grid.squeeze(0)
+        interpolated_feature = trilinear_interpolation(feature_grid, xyz_) 
+        semantic_logits = small_mlp(interpolated_feature)
+        semantic_logits = semantic_logits.view(N_rays, N_samples_, -1)
+
+        semantic_final = torch.sum(weights.unsqueeze(-1)*semantic_logits, -2) # (N_rays, 3)
+
+        return semantic_final, weights
+    
+    embedding_xyz = embeddings[0]
+    embedding_dir = embeddings[1]
+
+    rays_o, rays_d = rays[:,0:3], rays[:,3:6] # (N_rays, 3)
+    near, far = rays[:,6:7], rays[:,7:8]
+
+    dir_embedded = embedding_dir(rays_d)
+
+    z_steps = torch.linspace(0,1,N_samples, device=rays.device)
+    if not use_disp:
+        z_vals = near*(1-z_steps) +far*z_steps
+    else:
+        z_vals = 1/(1/near*(1-z_steps)+1/far*z_steps)
+
+    z_vals = z_vals.expand(N_rays, N_samples)
+
+    if perturb > 0:
+        z_vals_mid = 0.5 *(z_vals[:,:-1] + z_vals[:,1:]) # (N_rays, N_samples-1) interval mid points
+        upper = torch.cat([z_vals_mid, z_vals[:,-1:]], -1)
+        lower = torch.cat([z_vals[:,:1], z_vals_mid], -1)
+
+        perturb_rand = perturb * torch.rand(z_vals.shape, device = rays.device)
+        z_vals = lower + (upper - lower) * perturb_rand
+
+    xyz_coarse_sampled = rays_o.unsqueeze(1) + rays_d.unsqueeze(1) * z_vals.unsqueeze(2) #(N_rays, N_samples, 3)
+    # weights should be the same as when only training nerf
+    semantic_final, weights = \
+        inference(nerf_model, embedding_xyz, xyz_coarse_sampled, rays_d, z_vals, feature_grid)
+    result = {
+        'semantic_final':semantic_final,
+        'weights':weights.sum(1)
+    }
     return result

@@ -17,7 +17,7 @@ dataset_name = 'blender' # blender or llff (own data)
 scene_name = 'lego' # whatever you want
 root_dir = '/home/timothy/Desktop/2022Fall/nerf_pl/nerf_synthetic/lego' # the folder containing data
 ckpt_path = '/home/timothy/Desktop/2023Spring/my_nerf/ckpts/exp_white_back_false/epoch=15-step=250000.ckpt' # the model path
-hparam_path = '/home/timothy/Desktop/2023Spring/my_nerf/lightning_logs/version_11/hparams.yaml'
+# hparam_path = '/home/timothy/Desktop/2023Spring/my_nerf/lightning_logs/version_11/hparams.yaml'
 ###############
 
 kwargs = {'root_dir': root_dir,
@@ -48,8 +48,12 @@ N = 128 # controls the resolution, set this number small here because we're only
         # when it comes to final reconstruction.
 xmin, xmax = -1.2, 1.2 # left/right range
 ymin, ymax = -1.2, 1.2 # forward/backward range
-# zmin, zmax = -1.2, 1.2 # up/down range
+# # zmin, zmax = -1.2, 1.2 # up/down range
 zmin, zmax = -0.6, 1.8 # up/down range
+# xmin, xmax = -3, 3 # left/right range
+# ymin, ymax = -3, 3 # forward/backward range
+# zmin, zmax = 0, 3 # up/down range
+
 ## Attention! the ranges MUST have the same length!
 sigma_threshold = 70. # controls the noise (lower=maybe more noise; higher=some mesh might be missing)
 ############################################################################################
