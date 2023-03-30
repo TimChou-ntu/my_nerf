@@ -1,4 +1,4 @@
-python train.py \
+python ../train.py \
    --mode train \
    --dataset_name blender \
    --root_dir /home/timothy/Desktop/2022Fall/nerf_pl/nerf_synthetic/lego \

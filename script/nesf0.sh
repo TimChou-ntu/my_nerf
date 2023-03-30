@@ -1,4 +1,4 @@
-python train.py \
+python ../train.py \
    --mode train \
    --dataset_name klevr \
    --root_dir /home/timothy/Desktop/2023Spring/my_nerf/nesf_dataset/klevr/0 \

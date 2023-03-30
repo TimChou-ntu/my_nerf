@@ -1,4 +1,4 @@
-python train.py \
+python ../train.py \
    --mode train \
    --dataset_name llff \
    --root_dir /home/timothy/Desktop/2023Spring/my_nerf/nerf_llff_data/fern \
